@@ -61,13 +61,7 @@ function shouldSendReminder(reminder, now = new Date(), timeZone = DEFAULT_TIME_
 
 function buildReactionRoleMessageText(reactionConfig = {}) {
   const customMessage = (reactionConfig.messageText || '').trim();
-  const reactionLines = (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
-
-  if (customMessage) {
-    return `${customMessage}\n\nReact to receive your role:\n${reactionLines}`;
-  }
-
-  return `React to receive your role:\n${reactionLines}`;
+  return customMessage || '';
 }
 
 module.exports = {
