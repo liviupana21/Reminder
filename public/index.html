@@ -200,13 +200,21 @@
           </div>
           <div class="row" style="margin-top: 10px;">
             <div>
-              <label>Time</label>
-              <input name="reminderTime" type="time" value="${reminder.reminderTime || '09:00'}" />
+              <label>Type</label>
+              <select name="type">
+                <option value="" ${!reminder.type ? 'selected' : ''}>Custom</option>
+                <option value="world-boss" ${reminder.type === 'world-boss' ? 'selected' : ''}>World Boss</option>
+                <option value="elite-boss" ${reminder.type === 'elite-boss' ? 'selected' : ''}>Elite Boss</option>
+                <option value="map-boss" ${reminder.type === 'map-boss' ? 'selected' : ''}>Map Boss</option>
+              </select>
             </div>
             <div>
               <label>Repeat every (minutes)</label>
               <input name="repeatIntervalMinutes" type="number" min="0" value="${reminder.repeatIntervalMinutes || 0}" />
             </div>
+          </div>
+          <div style="margin-top: 8px; color: #cbd5e1; font-size: 0.85rem;">
+            ${reminder.type === 'world-boss' ? 'Schedule: weekdays 10:00/22:00, weekends 10:00/18:00/22:00' : reminder.type === 'elite-boss' ? 'Schedule: every 4 hours at 01:00, 05:00, 09:00, 13:00, 17:00, 21:00, 25:00' : reminder.type === 'map-boss' ? 'Schedule: every 2 hours from 00:00 through 22:00' : 'Use a custom time or choose a boss preset.'}
           </div>
           <div style="margin-top: 10px;">
             <label>Message</label>
@@ -304,6 +312,7 @@
           const get = (name) => card.querySelector(`[name="${name}"]`).value;
           return {
             id: card.querySelector('[name="id"]').value || undefined,
+            type: get('type'),
             channelId: get('channelId'),
             roleId: get('roleId'),
             reminderTime: get('reminderTime'),

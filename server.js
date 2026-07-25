@@ -23,46 +23,48 @@ app.use(express.static(path.join(__dirname, 'public')));
 function createReminder(overrides = {}) {
   return {
     id: overrides.id || randomUUID(),
+    type: overrides.type || '',
     enabled: overrides.enabled !== false,
     channelId: overrides.channelId || '',
     roleId: overrides.roleId || '',
     reminderTime: overrides.reminderTime || '09:00',
-    repeatIntervalMinutes: Number(overrides.repeatIntervalMinutes) || 0,
+    repeatIntervalMinutes: overrides.repeatIntervalMinutes != null ? Number(overrides.repeatIntervalMinutes) : 0,
     message: overrides.message || 'Reminder time!'
   };
 }
 
-function getReminderTimesForType(type) {
-  if (type === 'world-boss') return [10 * 60, 18 * 60, 22 * 60];
-  if (type === 'elite-boss') return [1 * 60, 5 * 60, 9 * 60, 13 * 60, 17 * 60, 21 * 60, 25 * 60];
-  if (type === 'map-boss') return [0, 2 * 60, 4 * 60, 6 * 60, 8 * 60, 10 * 60, 12 * 60, 14 * 60, 16 * 60, 18 * 60, 20 * 60, 22 * 60];
+function getReminderSchedule(reminder, now = new Date()) {
+  if (reminder.type === 'world-boss') {
+    const day = now.getDay();
+    const weekend = day === 0 || day === 6;
+    return weekend ? [10 * 60, 18 * 60, 22 * 60] : [10 * 60, 22 * 60];
+  }
+
+  if (reminder.type === 'elite-boss') {
+    return [1 * 60, 5 * 60, 9 * 60, 13 * 60, 17 * 60, 21 * 60, 25 * 60];
+  }
+
+  if (reminder.type === 'map-boss') {
+    return [0, 2 * 60, 4 * 60, 6 * 60, 8 * 60, 10 * 60, 12 * 60, 14 * 60, 16 * 60, 18 * 60, 20 * 60, 22 * 60];
+  }
+
   return [];
 }
 
 function shouldSendReminder(reminder, now) {
-  if (!reminder.enabled || !reminder.reminderTime) return false;
+  if (!reminder.enabled) return false;
+
+  const schedule = getReminderSchedule(reminder, now);
+  if (schedule.length) {
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    return schedule.includes(currentMinutes - 5);
+  }
+
+  if (!reminder.reminderTime) return false;
 
   const [hours, minutes] = reminder.reminderTime.split(':').map(Number);
   const targetMinutes = hours * 60 + minutes;
   const currentMinutes = now.getHours() * 60 + now.getMinutes();
-
-  if (reminder.type === 'world-boss') {
-    const day = now.getDay();
-    const weekend = day === 0 || day === 6;
-    const allowedTimes = weekend ? [10 * 60, 18 * 60, 22 * 60] : [10 * 60, 22 * 60];
-    return allowedTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
-  }
-
-  if (reminder.type === 'elite-boss') {
-    const eliteTimes = [1 * 60, 5 * 60, 9 * 60, 13 * 60, 17 * 60, 21 * 60, 25 * 60];
-    return eliteTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
-  }
-
-  if (reminder.type === 'map-boss') {
-    const mapTimes = [0, 2 * 60, 4 * 60, 6 * 60, 8 * 60, 10 * 60, 12 * 60, 14 * 60, 16 * 60, 18 * 60, 20 * 60, 22 * 60];
-    return mapTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
-  }
-
   return currentMinutes === targetMinutes;
 }
 
@@ -71,9 +73,9 @@ function readConfig() {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(configPath, JSON.stringify({
       reminders: [
-        createReminder({ id: 'world-boss', type: 'world-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530604998805684399', reminderTime: '09:55', message: 'World Boss is spawning in 5 minutes' }),
-        createReminder({ id: 'elite-boss', type: 'elite-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530611582332047391', reminderTime: '00:55', message: 'Elite Bosses will be spawned in 5 minutes' }),
-        createReminder({ id: 'map-boss', type: 'map-boss', enabled: true, channelId: '1530604998805684399', roleId: '1530611664745922730', reminderTime: '23:55', message: 'Map Bosses (2hrs bosses) will be spawned in 5 minutes' })
+        createReminder({ id: 'world-boss', type: 'world-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530604998805684399', reminderTime: '09:55', repeatIntervalMinutes: 10, message: 'World Boss is spawning in 5 minutes' }),
+        createReminder({ id: 'elite-boss', type: 'elite-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530611582332047391', reminderTime: '00:55', repeatIntervalMinutes: 10, message: 'Elite Bosses will be spawned in 5 minutes' }),
+        createReminder({ id: 'map-boss', type: 'map-boss', enabled: true, channelId: '1530604998805684399', roleId: '1530611664745922730', reminderTime: '23:55', repeatIntervalMinutes: 10, message: 'Map Bosses (2hrs bosses) will be spawned in 5 minutes' })
       ],
       reactionRoleMessage: {
         channelId: '1528095638955233350',
@@ -197,10 +199,6 @@ function startReminderLoop() {
 
       if (shouldSendReminder(reminder, now)) {
         sendReminder(reminder).catch(console.error);
-        const repeatMinutes = Number(reminder.repeatIntervalMinutes);
-        if (repeatMinutes > 0) {
-          setTimeout(() => sendReminder(reminder).catch(console.error), repeatMinutes * 60 * 1000);
-        }
       }
     });
   }, 30000);
