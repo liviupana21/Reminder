@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Reminder Bot Control Center</title>
+    <style>
+      :root {
+        --bg: #0f172a;
+        --panel: #111827;
+        --panel-2: #1f2937;
+        --accent: #6366f1;
+        --accent-2: #8b5cf6;
+        --text: #f8fafc;
+        --muted: #94a3b8;
+        --border: rgba(255, 255, 255, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: Inter, Arial, sans-serif;
+        background: linear-gradient(135deg, var(--bg), #111827 35%, #1d4ed8);
+        color: var(--text);
+        min-height: 100vh;
+        padding: 24px;
+      }
+
+      .shell {
+        max-width: 900px;
+        margin: 0 auto;
+        background: rgba(17, 24, 39, 0.92);
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+        overflow: hidden;
+      }
+
+      .hero {
+        padding: 28px 30px 18px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(90deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.18));
+      }
+
+      .hero h1 { margin: 0 0 8px; font-size: 1.8rem; }
+      .hero p { margin: 0; color: var(--muted); line-height: 1.5; }
+
+      .content { padding: 24px 30px 30px; }
+      .grid { display: grid; gap: 16px; }
+      .card {
+        background: var(--panel-2);
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 16px;
+      }
+
+      .row { display: grid; gap: 12px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      label { display: block; font-size: 0.95rem; color: #dbeafe; margin-bottom: 6px; }
+      input, textarea, button {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-size: 0.95rem;
+      }
+
+      textarea { min-height: 96px; resize: vertical; }
+      button {
+        cursor: pointer;
+        font-weight: 600;
+        border: none;
+        transition: transform 0.15s ease;
+      }
+      button:hover { transform: translateY(-1px); }
+      .primary { background: linear-gradient(135deg, var(--accent), var(--accent-2)); }
+      .secondary { background: rgba(255, 255, 255, 0.08); }
+      .danger { background: #ef4444; }
+
+      .reminder-list { display: grid; gap: 12px; }
+      .reminder-item { padding: 14px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); }
+      .reminder-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+      .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.78rem; background: rgba(99, 102, 241, 0.16); color: #c7d2fe; }
+      .status { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(34, 197, 94, 0.16); color: #dcfce7; border: 1px solid rgba(34, 197, 94, 0.24); }
+      .help { margin-top: 14px; color: var(--muted); font-size: 0.95rem; line-height: 1.6; }
+      .help code { color: #bfdbfe; }
+
+      @media (max-width: 720px) {
+        .row { grid-template-columns: 1fr; }
+        body { padding: 12px; }
+        .hero, .content { padding-left: 18px; padding-right: 18px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="hero">
+        <h1>Reminder Bot Control Center</h1>
+        <p>Create and manage live reminders for your Discord server from one simple dashboard.</p>
+      </div>
+
+      <div class="content">
+        <form id="config-form">
+          <div class="grid">
+            <div class="card">
+              <div class="row">
+                <div>
+                  <label>Bot Client ID</label>
+                  <input id="clientId" name="clientId" placeholder="Discord app client ID" />
+                </div>
+                <div>
+                  <label>Invite Link</label>
+                  <input id="inviteLink" value="https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&scope=bot&permissions=8" readonly />
+                </div>
+              </div>
+              <p class="help">Create your bot in the Discord Developer Portal, copy the Client ID, and replace <code>YOUR_CLIENT_ID</code> in the link above.</p>
+            </div>
+
+            <div class="card">
+              <div class="reminder-list" id="reminder-list"></div>
+              <div class="row" style="margin-top: 12px;">
+                <button type="button" class="secondary" id="add-reminder">+ Add Reminder</button>
+                <button type="submit" class="primary">Save All Reminders</button>
+              </div>
+            </div>
+          </div>
+        </form>
+
+        <div id="status" class="status">Loading reminders...</div>
+      </div>
+    </div>
+
+    <script>
+      const reminderList = document.getElementById('reminder-list');
+      const statusBox = document.getElementById('status');
+      const form = document.getElementById('config-form');
+      const clientIdInput = document.getElementById('clientId');
+      const inviteLinkInput = document.getElementById('inviteLink');
+
+      function createReminderCard(reminder = {}, index = 0) {
+        const item = document.createElement('div');
+        item.className = 'reminder-item';
+        item.innerHTML = `
+          <div class="reminder-top">
+            <strong>Reminder ${index + 1}</strong>
+            <span class="pill">${reminder.enabled === false ? 'Disabled' : 'Active'}</span>
+          </div>
+          <div class="row">
+            <div>
+              <label>Channel ID</label>
+              <input name="channelId" value="${reminder.channelId || ''}" placeholder="Target channel ID" />
+            </div>
+            <div>
+              <label>Role ID</label>
+              <input name="roleId" value="${reminder.roleId || ''}" placeholder="Role mention ID" />
+            </div>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <div>
+              <label>Time</label>
+              <input name="reminderTime" type="time" value="${reminder.reminderTime || '09:00'}" />
+            </div>
+            <div>
+              <label>Repeat every (minutes)</label>
+              <input name="repeatIntervalMinutes" type="number" min="0" value="${reminder.repeatIntervalMinutes || 0}" />
+            </div>
+          </div>
+          <div style="margin-top: 10px;">
+            <label>Message</label>
+            <textarea name="message" placeholder="Reminder text">${reminder.message || 'Reminder time!'}</textarea>
+          </div>
+          <div class="row" style="margin-top: 10px;">
+            <div>
+              <label>Enabled</label>
+              <select name="enabled">
+                <option value="true" ${reminder.enabled !== false ? 'selected' : ''}>Enabled</option>
+                <option value="false" ${reminder.enabled === false ? 'selected' : ''}>Disabled</option>
+              </select>
+            </div>
+            <div>
+              <label>&nbsp;</label>
+              <button type="button" class="danger remove-reminder">Remove</button>
+            </div>
+          </div>
+          <input type="hidden" name="id" value="${reminder.id || ''}" />
+        `;
+        item.querySelector('.remove-reminder').addEventListener('click', () => {
+          item.remove();
+          renderReminderCount();
+        });
+        return item;
+      }
+
+      function renderReminderCount() {
+        const cards = reminderList.querySelectorAll('.reminder-item');
+        cards.forEach((card, index) => {
+          const title = card.querySelector('strong');
+          if (title) title.textContent = `Reminder ${index + 1}`;
+        });
+      }
+
+      function addReminder(reminder = {}) {
+        reminderList.appendChild(createReminderCard(reminder, reminderList.children.length));
+      }
+
+      async function loadConfig() {
+        const res = await fetch('/config');
+        const data = await res.json();
+        reminderList.innerHTML = '';
+        const reminders = Array.isArray(data.reminders) && data.reminders.length ? data.reminders : [{}];
+        reminders.forEach((reminder) => addReminder(reminder));
+        clientIdInput.value = data.clientId || '';
+        if (data.clientId) {
+          inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${data.clientId}&scope=bot&permissions=8`;
+        }
+        statusBox.textContent = 'Configuration loaded.';
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const cards = Array.from(reminderList.querySelectorAll('.reminder-item'));
+        const reminders = cards.map((card) => {
+          const get = (name) => card.querySelector(`[name="${name}"]`).value;
+          return {
+            id: card.querySelector('[name="id"]').value || undefined,
+            channelId: get('channelId'),
+            roleId: get('roleId'),
+            reminderTime: get('reminderTime'),
+            repeatIntervalMinutes: Number(get('repeatIntervalMinutes') || 0),
+            message: get('message'),
+            enabled: get('enabled') === 'true'
+          };
+        });
+
+        const payload = {
+          clientId: clientIdInput.value,
+          reminders
+        };
+
+        const res = await fetch('/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        statusBox.textContent = 'All reminders saved successfully.';
+        if (clientIdInput.value) {
+          inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${clientIdInput.value}&scope=bot&permissions=8`;
+        }
+        console.log(data);
+      });
+
+      document.getElementById('add-reminder').addEventListener('click', () => addReminder());
+      loadConfig();
+    </script>
+  </body>
+</html>
