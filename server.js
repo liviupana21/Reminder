@@ -152,21 +152,29 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
     ...(reactionConfigOverride || {})
   };
 
-  if (!reactionConfig.channelId) return false;
+  if (!reactionConfig.channelId) {
+    return { sent: false, reason: 'No channel ID was provided.' };
+  }
 
   let channel = client.channels.cache.get(reactionConfig.channelId);
   if (!channel) {
     channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
   }
 
-  if (!channel || !channel.isTextBased()) return false;
+  if (!channel) {
+    return { sent: false, reason: `Could not find a channel with ID ${reactionConfig.channelId}.` };
+  }
+
+  if (!channel.isTextBased()) {
+    return { sent: false, reason: `Channel ${reactionConfig.channelId} is not a text channel.` };
+  }
 
   const customMessage = (reactionConfig.messageText || '').trim();
   const messageText = customMessage
     ? `${customMessage}\n\nReact to receive your role:\n${(reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n')}`
     : 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
-  const sent = await channel.send(messageText).catch(() => null);
-  if (sent) {
+  const sent = await channel.send(messageText).catch((error) => ({ error }));
+  if (sent && sent.id) {
     reactionConfig.messageId = sent.id;
     reactionConfig.enabled = true;
     config.reactionRoleMessage = reactionConfig;
@@ -174,10 +182,11 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
     for (const item of reactionConfig.reactions || []) {
       await sent.react(item.emoji).catch(() => null);
     }
-    return true;
+    return { sent: true, messageId: sent.id, reason: 'Message sent successfully.' };
   }
 
-  return false;
+  const errorMessage = sent && sent.error ? sent.error.message : 'Unknown error.';
+  return { sent: false, reason: `Could not send the message. Discord returned: ${errorMessage}` };
 }
 
 async function handleReaction(role, userId, emojiName) {
@@ -230,9 +239,9 @@ app.get('/config', (req, res) => {
 });
 
 app.post('/reaction-role/send', async (req, res) => {
-  const sent = await sendReactionRoleMessage(req.body || {});
+  const result = await sendReactionRoleMessage(req.body || {});
   res.json({
-    sent,
+    ...result,
     config: readConfig()
   });
 });

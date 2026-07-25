@@ -377,7 +377,7 @@
         reactionMessageId.value = reactionConfig.messageId || '';
         reactionState.textContent = data.sent
           ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}`
-          : 'The message could not be sent. Check the channel ID and bot permissions.';
+          : `Send failed: ${data.reason || 'Unknown error'}`;
       });
       document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
         const res = await fetch('/config');
