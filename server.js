@@ -91,6 +91,20 @@ function readConfig() {
   }
 
   parsed.reminders = parsed.reminders.map((item) => createReminder(item));
+
+  if (!parsed.reactionRoleMessage) {
+    parsed.reactionRoleMessage = {
+      channelId: '1528095638955233350',
+      messageId: '',
+      enabled: false,
+      reactions: [
+        { emoji: '🎯', roleId: '1530604998805684399' },
+        { emoji: '⚔️', roleId: '1530611582332047391' },
+        { emoji: '🗺️', roleId: '1530611664745922730' }
+      ]
+    };
+  }
+
   return parsed;
 }
 
@@ -214,12 +228,12 @@ function messageMatchesReactionRoleConfig(message, reactionConfig) {
 }
 
 async function reconcileReactionRoleMessage(message) {
-  if (!client.user || message.author.id !== client.user.id) return;
+  if (!client.user || message.author.id !== client.user.id) return { matched: false };
 
   const config = readConfig();
   const reactionConfig = config.reactionRoleMessage || {};
-  if (!reactionConfig.channelId || message.channelId !== reactionConfig.channelId) return;
-  if (!messageMatchesReactionRoleConfig(message, reactionConfig)) return;
+  if (!reactionConfig.channelId || message.channelId !== reactionConfig.channelId) return { matched: false };
+  if (!messageMatchesReactionRoleConfig(message, reactionConfig)) return { matched: false };
 
   if (reactionConfig.messageId !== message.id) {
     reactionConfig.messageId = message.id;
@@ -230,6 +244,7 @@ async function reconcileReactionRoleMessage(message) {
     console.log('[reaction-role] adopted existing message', message.id, 'as the tracked reaction-role message');
   }
 
+  let usersProcessed = 0;
   for (const item of reactionConfig.reactions || []) {
     const messageReaction = message.reactions.cache.find((r) => normalizeEmoji(r.emoji) === normalizeEmoji(item.emoji));
     if (!messageReaction) continue;
@@ -240,28 +255,59 @@ async function reconcileReactionRoleMessage(message) {
     for (const reactor of reactors.values()) {
       if (reactor.bot) continue;
       await handleReaction(true, reactor.id, normalizeEmoji(item.emoji), message.guildId);
+      usersProcessed += 1;
     }
   }
+
+  return { matched: true, messageId: message.id, usersProcessed };
 }
 
 async function scanReactionRoleChannel() {
   const config = readConfig();
   const reactionConfig = config.reactionRoleMessage || {};
-  if (!reactionConfig.channelId) return;
+  if (!reactionConfig.channelId) {
+    return { synced: false, reason: 'No reaction-role channel is configured.' };
+  }
 
   let channel = client.channels.cache.get(reactionConfig.channelId);
   if (!channel) {
     channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
   }
-  if (!channel || !channel.isTextBased()) return;
+  if (!channel || !channel.isTextBased()) {
+    return { synced: false, reason: `Could not find channel ${reactionConfig.channelId}.` };
+  }
 
   const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
-  if (!messages) return;
+  if (!messages) {
+    return { synced: false, reason: 'Could not fetch messages from the channel.' };
+  }
+
+  let messagesChecked = 0;
+  let matchedMessageId = null;
+  let usersProcessed = 0;
 
   for (const message of messages.values()) {
-    if (message.author.id !== client.user.id) continue;
-    await reconcileReactionRoleMessage(message).catch((error) => console.error('[reaction-role] reconcile failed', error));
+    if (!client.user || message.author.id !== client.user.id) continue;
+    messagesChecked += 1;
+    const result = await reconcileReactionRoleMessage(message).catch((error) => {
+      console.error('[reaction-role] reconcile failed', error);
+      return { matched: false };
+    });
+    if (result.matched) {
+      matchedMessageId = result.messageId;
+      usersProcessed += result.usersProcessed;
+    }
   }
+
+  return {
+    synced: true,
+    messagesChecked,
+    matchedMessageId,
+    usersProcessed,
+    reason: matchedMessageId
+      ? `Synced roles from message ${matchedMessageId}. Processed ${usersProcessed} reactions.`
+      : `Checked ${messagesChecked} of the bot's messages in the channel; none matched the configured reactions.`
+  };
 }
 
 function startReminderLoop() {
@@ -295,6 +341,18 @@ app.get('/config', (req, res) => {
 
 app.post('/reaction-role/send', async (req, res) => {
   const result = await sendReactionRoleMessage(req.body || {});
+  res.json({
+    ...result,
+    config: readConfig()
+  });
+});
+
+app.post('/reaction-role/sync', async (req, res) => {
+  if (!client.isReady()) {
+    return res.json({ synced: false, reason: 'The Discord bot is not connected yet.' });
+  }
+
+  const result = await scanReactionRoleChannel().catch((error) => ({ synced: false, reason: error.message }));
   res.json({
     ...result,
     config: readConfig()

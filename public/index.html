@@ -153,6 +153,7 @@
                 <button type="button" class="secondary" id="send-reaction-message">Send Reaction Message</button>
                 <button type="button" class="danger" id="delete-reaction-message">Delete Reaction Message</button>
                 <button type="button" class="primary" id="refresh-reaction-state">Refresh Reaction State</button>
+                <button type="button" class="primary" id="sync-reaction-roles">Sync Roles From Channel</button>
               </div>
               <div id="reactionState" class="status">No reaction message sent yet.</div>
             </div>
@@ -395,6 +396,16 @@
         const reactionConfig = data.reactionRoleMessage || {};
         reactionMessageId.value = reactionConfig.messageId || '';
         reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
+      });
+      document.getElementById('sync-reaction-roles').addEventListener('click', async () => {
+        reactionState.textContent = 'Scanning the channel for reactions...';
+        const res = await fetch('/reaction-role/sync', { method: 'POST' });
+        const data = await res.json();
+        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
+        reactionMessageId.value = reactionConfig.messageId || '';
+        reactionState.textContent = data.synced
+          ? (data.reason || 'Sync complete.')
+          : `Sync failed: ${data.reason || 'Unknown error'}`;
       });
       guildSelect.addEventListener('change', (event) => {
         const selectedGuildId = event.target.value;
