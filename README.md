@@ -16,7 +16,21 @@ A simple Discord reminder bot with a web-based control panel.
 4. Start the app with `npm start`
 5. Open `http://localhost:3000`
 
+## Live hosting (free)
+The project is ready to deploy to Render for free.
+
+1. Push this project to GitHub.
+2. Create a free Render account.
+3. Click New > Web Service.
+4. Connect your GitHub repository.
+5. Render will detect the `render.yaml` file and deploy automatically.
+6. Add these environment variables in Render:
+   - `DISCORD_TOKEN`
+   - `CLIENT_ID`
+   - `PORT=10000`
+
 ## Notes
 - The panel saves settings to `data/config.json`
 - The reminder loop checks every 30 seconds
 - The bot needs a valid Discord bot token to actually send reminders
+- For this version, the bot uses the minimal `Guilds` intent, which is the safest choice for a reminder bot

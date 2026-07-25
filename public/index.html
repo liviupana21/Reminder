@@ -115,6 +115,11 @@
                 </div>
               </div>
               <p class="help">Create your bot in the Discord Developer Portal, copy the Client ID, and replace <code>YOUR_CLIENT_ID</code> in the link above.</p>
+              <div style="margin-top: 12px;">
+                <label>Available Servers</label>
+                <select id="guildSelect" style="width: 100%; padding: 10px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.04); color: var(--text);"></select>
+              </div>
+              <p class="help" id="guildStatus">Waiting for the bot to connect to Discord...</p>
             </div>
 
             <div class="card">
@@ -137,6 +142,8 @@
       const form = document.getElementById('config-form');
       const clientIdInput = document.getElementById('clientId');
       const inviteLinkInput = document.getElementById('inviteLink');
+      const guildSelect = document.getElementById('guildSelect');
+      const guildStatus = document.getElementById('guildStatus');
 
       function createReminderCard(reminder = {}, index = 0) {
         const item = document.createElement('div');
@@ -204,6 +211,37 @@
         reminderList.appendChild(createReminderCard(reminder, reminderList.children.length));
       }
 
+      async function loadGuilds() {
+        try {
+          const res = await fetch('/guilds');
+          const data = await res.json();
+          guildSelect.innerHTML = '';
+          if (!data.guilds || !data.guilds.length) {
+            const option = document.createElement('option');
+            option.textContent = 'No servers found yet';
+            guildSelect.appendChild(option);
+            guildStatus.textContent = 'Invite the bot to a server and refresh this page.';
+            return;
+          }
+
+          const placeholder = document.createElement('option');
+          placeholder.textContent = 'Select a server';
+          placeholder.value = '';
+          guildSelect.appendChild(placeholder);
+
+          data.guilds.forEach((guild) => {
+            const option = document.createElement('option');
+            option.value = guild.id;
+            option.textContent = guild.name;
+            guildSelect.appendChild(option);
+          });
+
+          guildStatus.textContent = 'Choose one server to target for reminders.';
+        } catch (error) {
+          guildStatus.textContent = 'Could not load servers yet.';
+        }
+      }
+
       async function loadConfig() {
         const res = await fetch('/config');
         const data = await res.json();
@@ -215,6 +253,7 @@
           inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${data.clientId}&scope=bot&permissions=8`;
         }
         statusBox.textContent = 'Configuration loaded.';
+        loadGuilds();
       }
 
       form.addEventListener('submit', async (e) => {
@@ -252,6 +291,12 @@
       });
 
       document.getElementById('add-reminder').addEventListener('click', () => addReminder());
+      guildSelect.addEventListener('change', (event) => {
+        const selectedGuildId = event.target.value;
+        if (!selectedGuildId) return;
+        const selectedGuildName = event.target.options[event.target.selectedIndex].text;
+        statusBox.textContent = `Selected server: ${selectedGuildName}`;
+      });
       loadConfig();
     </script>
   </body>

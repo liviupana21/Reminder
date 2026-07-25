@@ -5,13 +5,14 @@ const { randomUUID } = require('crypto');
 const dotenv = require('dotenv');
 const { Client, GatewayIntentBits, Events } = require('discord.js');
 
-dotenv.config();
+const envPath = path.resolve(__dirname, '.env');
+dotenv.config({ path: envPath, override: true });
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
 const configPath = path.join(__dirname, 'data', 'config.json');
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
+  intents: [GatewayIntentBits.Guilds]
 });
 
 app.use(express.json());
@@ -111,7 +112,25 @@ app.get('/health', (req, res) => {
 });
 
 app.get('/config', (req, res) => {
-  res.json(readConfig());
+  const config = readConfig();
+  res.json(config);
+});
+
+app.get('/guilds', async (req, res) => {
+  if (!client.isReady()) {
+    return res.json({ guilds: [] });
+  }
+
+  try {
+    const guilds = client.guilds.cache.map((guild) => ({
+      id: guild.id,
+      name: guild.name,
+      icon: guild.iconURL({ dynamic: true }) || null
+    }));
+    res.json({ guilds });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/config', (req, res) => {
@@ -143,7 +162,12 @@ client.on(Events.InteractionCreate, async interaction => {
   }
 });
 
-if (process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'your_discord_bot_token_here') {
+const hasToken = Boolean(process.env.DISCORD_TOKEN && process.env.DISCORD_TOKEN !== 'your_discord_bot_token_here');
+const hasClientId = Boolean(process.env.CLIENT_ID && process.env.CLIENT_ID !== 'your_discord_client_id_here');
+
+console.log(`Env check: token=${hasToken ? 'present' : 'missing'}, clientId=${hasClientId ? 'present' : 'missing'}`);
+
+if (hasToken) {
   client.login(process.env.DISCORD_TOKEN).catch((error) => {
     console.error('Discord login failed:', error.message);
   });
