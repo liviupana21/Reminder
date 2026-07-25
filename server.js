@@ -156,7 +156,10 @@ async function sendReactionRoleMessage() {
 
   if (!channel || !channel.isTextBased()) return;
 
-  const messageText = 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
+  const customMessage = (reactionConfig.messageText || '').trim();
+  const messageText = customMessage
+    ? `${customMessage}\n\nReact to receive your role:\n${(reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n')}`
+    : 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
   const sent = await channel.send(messageText).catch(() => null);
   if (sent) {
     reactionConfig.messageId = sent.id;

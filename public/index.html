@@ -142,6 +142,10 @@
                 <input id="reactionMessageId" readonly />
               </div>
               <div style="margin-top: 10px;">
+                <label>Message Text</label>
+                <textarea id="reactionMessageText" rows="4" placeholder="Write the message you want to send with the reaction roles"></textarea>
+              </div>
+              <div style="margin-top: 10px;">
                 <label>Reactions</label>
                 <textarea id="reactionReactions" rows="4" placeholder="emoji:roleId lines"></textarea>
               </div>
@@ -177,6 +181,7 @@
       const reactionEnabled = document.getElementById('reactionEnabled');
       const reactionChannelId = document.getElementById('reactionChannelId');
       const reactionMessageId = document.getElementById('reactionMessageId');
+      const reactionMessageText = document.getElementById('reactionMessageText');
       const reactionReactions = document.getElementById('reactionReactions');
       const reactionState = document.getElementById('reactionState');
 
@@ -299,6 +304,7 @@
         reactionEnabled.value = reactionConfig.enabled ? 'true' : 'false';
         reactionChannelId.value = reactionConfig.channelId || '1528095638955233350';
         reactionMessageId.value = reactionConfig.messageId || '';
+        reactionMessageText.value = reactionConfig.messageText || '';
         reactionReactions.value = (reactionConfig.reactions || []).map((item) => `${item.emoji}:${item.roleId}`).join('\n');
         reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
         statusBox.textContent = 'Configuration loaded.';
@@ -328,6 +334,7 @@
           reactionRoleMessage: {
             channelId: reactionChannelId.value,
             enabled: reactionEnabled.value === 'true',
+            messageText: reactionMessageText.value,
             reactions: reactionReactions.value.split('\n').filter(Boolean).map((line) => {
               const parts = line.split(':');
               return { emoji: parts[0], roleId: parts.slice(1).join(':') };
