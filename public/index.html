@@ -151,6 +151,7 @@
               </div>
               <div class="row" style="margin-top: 12px;">
                 <button type="button" class="secondary" id="send-reaction-message">Send Reaction Message</button>
+                <button type="button" class="danger" id="delete-reaction-message">Delete Reaction Message</button>
                 <button type="button" class="primary" id="refresh-reaction-state">Refresh Reaction State</button>
               </div>
               <div id="reactionState" class="status">No reaction message sent yet.</div>
@@ -378,6 +379,15 @@
         reactionState.textContent = data.sent
           ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}\nPreview: ${data.messageText || ''}`
           : `Send failed: ${data.reason || 'Unknown error'}`;
+      });
+      document.getElementById('delete-reaction-message').addEventListener('click', async () => {
+        const res = await fetch('/reaction-role/delete', { method: 'DELETE' });
+        const data = await res.json();
+        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
+        reactionMessageId.value = reactionConfig.messageId || '';
+        reactionState.textContent = data.deleted
+          ? 'Reaction message deleted successfully.'
+          : `Delete failed: ${data.reason || 'Unknown error'}`;
       });
       document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
         const res = await fetch('/config');

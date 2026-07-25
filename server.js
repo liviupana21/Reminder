@@ -242,6 +242,38 @@ app.post('/reaction-role/send', async (req, res) => {
   });
 });
 
+app.delete('/reaction-role/delete', async (req, res) => {
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  const messageId = reactionConfig.messageId;
+  if (!messageId) {
+    return res.json({ deleted: false, reason: 'No reaction message has been sent yet.', config: readConfig() });
+  }
+
+  let channel = client.channels.cache.get(reactionConfig.channelId);
+  if (!channel) {
+    channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
+  }
+
+  if (!channel || !channel.isTextBased()) {
+    return res.json({ deleted: false, reason: 'The configured channel could not be found.', config: readConfig() });
+  }
+
+  const message = await channel.messages.fetch(messageId).catch(() => null);
+  if (!message) {
+    reactionConfig.messageId = '';
+    config.reactionRoleMessage = reactionConfig;
+    writeConfig(config);
+    return res.json({ deleted: true, reason: 'Reaction message was already missing.', config: readConfig() });
+  }
+
+  await message.delete().catch((error) => console.error('[reaction-role] failed to delete message', error));
+  reactionConfig.messageId = '';
+  config.reactionRoleMessage = reactionConfig;
+  writeConfig(config);
+  return res.json({ deleted: true, config: readConfig() });
+});
+
 app.get('/guilds', async (req, res) => {
   if (!client.isReady()) {
     return res.json({ guilds: [] });
