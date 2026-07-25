@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
 const dotenv = require('dotenv');
-const { Client, GatewayIntentBits, Events } = require('discord.js');
+const { Client, GatewayIntentBits, Events, Partials } = require('discord.js');
 
 const envPath = path.resolve(__dirname, '.env');
 dotenv.config({ path: envPath, override: true });
@@ -12,7 +12,8 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const configPath = path.join(__dirname, 'data', 'config.json');
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildMembers],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
 app.use(express.json());
@@ -31,10 +32,60 @@ function createReminder(overrides = {}) {
   };
 }
 
+function getReminderTimesForType(type) {
+  if (type === 'world-boss') return [10 * 60, 18 * 60, 22 * 60];
+  if (type === 'elite-boss') return [1 * 60, 5 * 60, 9 * 60, 13 * 60, 17 * 60, 21 * 60, 25 * 60];
+  if (type === 'map-boss') return [0, 2 * 60, 4 * 60, 6 * 60, 8 * 60, 10 * 60, 12 * 60, 14 * 60, 16 * 60, 18 * 60, 20 * 60, 22 * 60];
+  return [];
+}
+
+function shouldSendReminder(reminder, now) {
+  if (!reminder.enabled || !reminder.reminderTime) return false;
+
+  const [hours, minutes] = reminder.reminderTime.split(':').map(Number);
+  const targetMinutes = hours * 60 + minutes;
+  const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+  if (reminder.type === 'world-boss') {
+    const day = now.getDay();
+    const weekend = day === 0 || day === 6;
+    const allowedTimes = weekend ? [10 * 60, 18 * 60, 22 * 60] : [10 * 60, 22 * 60];
+    return allowedTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
+  }
+
+  if (reminder.type === 'elite-boss') {
+    const eliteTimes = [1 * 60, 5 * 60, 9 * 60, 13 * 60, 17 * 60, 21 * 60, 25 * 60];
+    return eliteTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
+  }
+
+  if (reminder.type === 'map-boss') {
+    const mapTimes = [0, 2 * 60, 4 * 60, 6 * 60, 8 * 60, 10 * 60, 12 * 60, 14 * 60, 16 * 60, 18 * 60, 20 * 60, 22 * 60];
+    return mapTimes.includes(targetMinutes) && currentMinutes === targetMinutes - 5;
+  }
+
+  return currentMinutes === targetMinutes;
+}
+
 function readConfig() {
   if (!fs.existsSync(configPath)) {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify({ reminders: [createReminder()] }, null, 2));
+    fs.writeFileSync(configPath, JSON.stringify({
+      reminders: [
+        createReminder({ id: 'world-boss', type: 'world-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530604998805684399', reminderTime: '09:55', message: 'World Boss is spawning in 5 minutes' }),
+        createReminder({ id: 'elite-boss', type: 'elite-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530611582332047391', reminderTime: '00:55', message: 'Elite Bosses will be spawned in 5 minutes' }),
+        createReminder({ id: 'map-boss', type: 'map-boss', enabled: true, channelId: '1530604998805684399', roleId: '1530611664745922730', reminderTime: '23:55', message: 'Map Bosses (2hrs bosses) will be spawned in 5 minutes' })
+      ],
+      reactionRoleMessage: {
+        channelId: '1528095638955233350',
+        messageId: '',
+        enabled: false,
+        reactions: [
+          { emoji: '🎯', roleId: '1530604998805684399' },
+          { emoji: '⚔️', roleId: '1530611582332047391' },
+          { emoji: '🗺️', roleId: '1530611664745922730' }
+        ]
+      }
+    }, null, 2));
   }
 
   const parsed = JSON.parse(fs.readFileSync(configPath, 'utf8'));
@@ -58,6 +109,18 @@ function writeConfig(data) {
   config.reminders = Array.isArray(config.reminders)
     ? config.reminders.map((item) => createReminder(item))
     : [createReminder()];
+  if (!config.reactionRoleMessage) {
+    config.reactionRoleMessage = {
+      channelId: '1528095638955233350',
+      messageId: '',
+      enabled: false,
+      reactions: [
+        { emoji: '🎯', roleId: '1530604998805684399' },
+        { emoji: '⚔️', roleId: '1530611582332047391' },
+        { emoji: '🗺️', roleId: '1530611664745922730' }
+      ]
+    };
+  }
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
@@ -79,20 +142,60 @@ async function sendReminder(reminder) {
   await channel.send(content).catch(console.error);
 }
 
+async function sendReactionRoleMessage() {
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  if (!reactionConfig.enabled) return;
+
+  let channel = client.channels.cache.get(reactionConfig.channelId);
+  if (!channel) {
+    channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
+  }
+
+  if (!channel || !channel.isTextBased()) return;
+
+  const messageText = 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
+  const sent = await channel.send(messageText).catch(() => null);
+  if (sent) {
+    reactionConfig.messageId = sent.id;
+    config.reactionRoleMessage = reactionConfig;
+    writeConfig(config);
+    for (const item of reactionConfig.reactions || []) {
+      await sent.react(item.emoji).catch(() => null);
+    }
+  }
+}
+
+async function handleReaction(role, userId, emojiName) {
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  const reactionEntry = (reactionConfig.reactions || []).find((item) => item.emoji === emojiName);
+  if (!reactionEntry || !reactionEntry.roleId) return;
+
+  const guild = role.guild;
+  const member = await guild.members.fetch(userId).catch(() => null);
+  if (!member) return;
+
+  const roleToAssign = await guild.roles.fetch(reactionEntry.roleId).catch(() => null);
+  if (!roleToAssign) return;
+
+  if (role) {
+    await member.roles.add(roleToAssign).catch(() => null);
+  } else {
+    await member.roles.remove(roleToAssign).catch(() => null);
+  }
+}
+
 function startReminderLoop() {
   setInterval(() => {
     const config = readConfig();
     const reminders = config.reminders || [];
+    const now = new Date();
 
     reminders.forEach((reminder) => {
       if (!reminder.enabled || !reminder.reminderTime) return;
 
-      const [hours, minutes] = reminder.reminderTime.split(':').map(Number);
-      const now = new Date();
-      const nowMinutes = now.getHours() * 60 + now.getMinutes();
-      const targetMinutes = hours * 60 + minutes;
-
-      if (nowMinutes === targetMinutes) {
+      if (shouldSendReminder(reminder, now)) {
         sendReminder(reminder).catch(console.error);
         const repeatMinutes = Number(reminder.repeatIntervalMinutes);
         if (repeatMinutes > 0) {
@@ -114,6 +217,11 @@ app.get('/health', (req, res) => {
 app.get('/config', (req, res) => {
   const config = readConfig();
   res.json(config);
+});
+
+app.post('/reaction-role/send', async (req, res) => {
+  await sendReactionRoleMessage();
+  res.json(readConfig());
 });
 
 app.get('/guilds', async (req, res) => {
@@ -153,6 +261,26 @@ app.post('/config', (req, res) => {
 client.once(Events.ClientReady, () => {
   console.log(`Logged in as ${client.user.tag}`);
   startReminderLoop();
+});
+
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  if (user.bot) return;
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  const messageId = reactionConfig.messageId;
+  if (!messageId || reaction.message.id !== messageId) return;
+  const emojiName = reaction.emoji.name || reaction.emoji.toString();
+  await handleReaction(true, user.id, emojiName);
+});
+
+client.on(Events.MessageReactionRemove, async (reaction, user) => {
+  if (user.bot) return;
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  const messageId = reactionConfig.messageId;
+  if (!messageId || reaction.message.id !== messageId) return;
+  const emojiName = reaction.emoji.name || reaction.emoji.toString();
+  await handleReaction(false, user.id, emojiName);
 });
 
 client.on(Events.InteractionCreate, async interaction => {

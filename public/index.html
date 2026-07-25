@@ -123,6 +123,36 @@
             </div>
 
             <div class="card">
+              <h3 style="margin-top: 0;">Reaction Role Message</h3>
+              <div class="row">
+                <div>
+                  <label>Enabled</label>
+                  <select id="reactionEnabled">
+                    <option value="true">Enabled</option>
+                    <option value="false">Disabled</option>
+                  </select>
+                </div>
+                <div>
+                  <label>Channel ID</label>
+                  <input id="reactionChannelId" placeholder="1528095638955233350" />
+                </div>
+              </div>
+              <div style="margin-top: 10px;">
+                <label>Message ID</label>
+                <input id="reactionMessageId" readonly />
+              </div>
+              <div style="margin-top: 10px;">
+                <label>Reactions</label>
+                <textarea id="reactionReactions" rows="4" placeholder="emoji:roleId lines"></textarea>
+              </div>
+              <div class="row" style="margin-top: 12px;">
+                <button type="button" class="secondary" id="send-reaction-message">Send Reaction Message</button>
+                <button type="button" class="primary" id="refresh-reaction-state">Refresh Reaction State</button>
+              </div>
+              <div id="reactionState" class="status">No reaction message sent yet.</div>
+            </div>
+
+            <div class="card">
               <div class="reminder-list" id="reminder-list"></div>
               <div class="row" style="margin-top: 12px;">
                 <button type="button" class="secondary" id="add-reminder">+ Add Reminder</button>
@@ -144,6 +174,11 @@
       const inviteLinkInput = document.getElementById('inviteLink');
       const guildSelect = document.getElementById('guildSelect');
       const guildStatus = document.getElementById('guildStatus');
+      const reactionEnabled = document.getElementById('reactionEnabled');
+      const reactionChannelId = document.getElementById('reactionChannelId');
+      const reactionMessageId = document.getElementById('reactionMessageId');
+      const reactionReactions = document.getElementById('reactionReactions');
+      const reactionState = document.getElementById('reactionState');
 
       function createReminderCard(reminder = {}, index = 0) {
         const item = document.createElement('div');
@@ -252,6 +287,12 @@
         if (data.clientId) {
           inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${data.clientId}&scope=bot&permissions=8`;
         }
+        const reactionConfig = data.reactionRoleMessage || {};
+        reactionEnabled.value = reactionConfig.enabled ? 'true' : 'false';
+        reactionChannelId.value = reactionConfig.channelId || '1528095638955233350';
+        reactionMessageId.value = reactionConfig.messageId || '';
+        reactionReactions.value = (reactionConfig.reactions || []).map((item) => `${item.emoji}:${item.roleId}`).join('\n');
+        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
         statusBox.textContent = 'Configuration loaded.';
         loadGuilds();
       }
@@ -274,7 +315,15 @@
 
         const payload = {
           clientId: clientIdInput.value,
-          reminders
+          reminders,
+          reactionRoleMessage: {
+            channelId: reactionChannelId.value,
+            enabled: reactionEnabled.value === 'true',
+            reactions: reactionReactions.value.split('\n').filter(Boolean).map((line) => {
+              const parts = line.split(':');
+              return { emoji: parts[0], roleId: parts.slice(1).join(':') };
+            })
+          }
         };
 
         const res = await fetch('/config', {
@@ -291,6 +340,20 @@
       });
 
       document.getElementById('add-reminder').addEventListener('click', () => addReminder());
+      document.getElementById('send-reaction-message').addEventListener('click', async () => {
+        const res = await fetch('/reaction-role/send', { method: 'POST' });
+        const data = await res.json();
+        const reactionConfig = data.reactionRoleMessage || {};
+        reactionMessageId.value = reactionConfig.messageId || '';
+        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
+      });
+      document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
+        const res = await fetch('/config');
+        const data = await res.json();
+        const reactionConfig = data.reactionRoleMessage || {};
+        reactionMessageId.value = reactionConfig.messageId || '';
+        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
+      });
       guildSelect.addEventListener('change', (event) => {
         const selectedGuildId = event.target.value;
         if (!selectedGuildId) return;
