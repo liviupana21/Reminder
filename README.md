@@ -12,22 +12,28 @@ A simple Discord reminder bot with a web-based control panel.
 ## Setup
 1. Install dependencies with `npm install`
 2. Copy `.env.example` to `.env`
-3. Fill in your Discord bot token
+3. Fill in your Discord bot token and other required values
 4. Start the app with `npm start`
 5. Open `http://localhost:3000`
 
-## Live hosting (free)
-The project is ready to deploy to Render for free.
+## WispByte deployment
+This project is already compatible with WispByte because it uses a standard Node.js entry point and a `package.json` start script.
 
 1. Push this project to GitHub.
-2. Create a free Render account.
-3. Click New > Web Service.
-4. Connect your GitHub repository.
-5. Render will detect the `render.yaml` file and deploy automatically.
-6. Add these environment variables in Render:
-   - `DISCORD_TOKEN`
+2. Create a WispByte account and create a new app/project from the repository.
+3. Choose the Node.js runtime.
+4. Set the start command to:
+   - `npm start`
+5. Add these environment variables in WispByte:
+   - `BOT_TOKEN`
    - `CLIENT_ID`
-   - `PORT=10000`
+   - `GUILD_ID`
+   - `PORT=3000`
+   - `REMINDER_TIME_ZONE=Europe/Bucharest`
+   - `REMINDER_LOOKAHEAD_MINUTES=5`
+
+## Live hosting (free)
+The project is also ready for Render, but WispByte is the better fit if you want a free 24/7 option for this bot.
 
 ## Notes
 - The panel saves settings to `data/config.json`
