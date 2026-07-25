@@ -357,11 +357,27 @@
 
       document.getElementById('add-reminder').addEventListener('click', () => addReminder());
       document.getElementById('send-reaction-message').addEventListener('click', async () => {
-        const res = await fetch('/reaction-role/send', { method: 'POST' });
+        const payload = {
+          channelId: reactionChannelId.value,
+          enabled: true,
+          messageText: reactionMessageText.value,
+          reactions: reactionReactions.value.split('\n').filter(Boolean).map((line) => {
+            const parts = line.split(':');
+            return { emoji: parts[0], roleId: parts.slice(1).join(':') };
+          })
+        };
+
+        const res = await fetch('/reaction-role/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
         const data = await res.json();
-        const reactionConfig = data.reactionRoleMessage || {};
+        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
         reactionMessageId.value = reactionConfig.messageId || '';
-        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
+        reactionState.textContent = data.sent
+          ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}`
+          : 'The message could not be sent. Check the channel ID and bot permissions.';
       });
       document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
         const res = await fetch('/config');

@@ -144,17 +144,22 @@ async function sendReminder(reminder) {
   await channel.send(content).catch(console.error);
 }
 
-async function sendReactionRoleMessage() {
+async function sendReactionRoleMessage(reactionConfigOverride = null) {
   const config = readConfig();
-  const reactionConfig = config.reactionRoleMessage || {};
-  if (!reactionConfig.enabled) return;
+  const baseReactionConfig = config.reactionRoleMessage || {};
+  const reactionConfig = {
+    ...baseReactionConfig,
+    ...(reactionConfigOverride || {})
+  };
+
+  if (!reactionConfig.channelId) return false;
 
   let channel = client.channels.cache.get(reactionConfig.channelId);
   if (!channel) {
     channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
   }
 
-  if (!channel || !channel.isTextBased()) return;
+  if (!channel || !channel.isTextBased()) return false;
 
   const customMessage = (reactionConfig.messageText || '').trim();
   const messageText = customMessage
@@ -163,12 +168,16 @@ async function sendReactionRoleMessage() {
   const sent = await channel.send(messageText).catch(() => null);
   if (sent) {
     reactionConfig.messageId = sent.id;
+    reactionConfig.enabled = true;
     config.reactionRoleMessage = reactionConfig;
     writeConfig(config);
     for (const item of reactionConfig.reactions || []) {
       await sent.react(item.emoji).catch(() => null);
     }
+    return true;
   }
+
+  return false;
 }
 
 async function handleReaction(role, userId, emojiName) {
@@ -221,8 +230,11 @@ app.get('/config', (req, res) => {
 });
 
 app.post('/reaction-role/send', async (req, res) => {
-  await sendReactionRoleMessage();
-  res.json(readConfig());
+  const sent = await sendReactionRoleMessage(req.body || {});
+  res.json({
+    sent,
+    config: readConfig()
+  });
 });
 
 app.get('/guilds', async (req, res) => {
