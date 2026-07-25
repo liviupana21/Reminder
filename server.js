@@ -173,6 +173,7 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
   const messageText = customMessage
     ? `${customMessage}\n\nReact to receive your role:\n${(reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n')}`
     : 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
+  console.log('[reaction-role] sending to channel', reactionConfig.channelId, ':', messageText);
   const sent = await channel.send(messageText).catch((error) => ({ error }));
   if (sent && sent.id) {
     reactionConfig.messageId = sent.id;
@@ -182,7 +183,7 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
     for (const item of reactionConfig.reactions || []) {
       await sent.react(item.emoji).catch(() => null);
     }
-    return { sent: true, messageId: sent.id, reason: 'Message sent successfully.' };
+    return { sent: true, messageId: sent.id, reason: 'Message sent successfully.', messageText };
   }
 
   const errorMessage = sent && sent.error ? sent.error.message : 'Unknown error.';

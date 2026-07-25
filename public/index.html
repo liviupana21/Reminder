@@ -376,7 +376,7 @@
         const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
         reactionMessageId.value = reactionConfig.messageId || '';
         reactionState.textContent = data.sent
-          ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}`
+          ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}\nPreview: ${data.messageText || ''}`
           : `Send failed: ${data.reason || 'Unknown error'}`;
       });
       document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
