@@ -4,6 +4,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const dotenv = require('dotenv');
 const { Client, GatewayIntentBits, Events, Partials } = require('discord.js');
+const { shouldSendReminder: shouldSendReminderAtTime, buildReactionRoleMessageText } = require('./reminder-utils');
 
 const envPath = path.resolve(__dirname, '.env');
 dotenv.config({ path: envPath, override: true });
@@ -51,21 +52,8 @@ function getReminderSchedule(reminder, now = new Date()) {
   return [];
 }
 
-function shouldSendReminder(reminder, now) {
-  if (!reminder.enabled) return false;
-
-  const schedule = getReminderSchedule(reminder, now);
-  if (schedule.length) {
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    return schedule.includes(currentMinutes - 5);
-  }
-
-  if (!reminder.reminderTime) return false;
-
-  const [hours, minutes] = reminder.reminderTime.split(':').map(Number);
-  const targetMinutes = hours * 60 + minutes;
-  const currentMinutes = now.getHours() * 60 + now.getMinutes();
-  return currentMinutes === targetMinutes;
+function shouldSendReminder(reminder, now = new Date()) {
+  return shouldSendReminderAtTime(reminder, now, process.env.REMINDER_TIME_ZONE || 'Europe/Bucharest', Number(process.env.REMINDER_LOOKAHEAD_MINUTES || 5));
 }
 
 function readConfig() {
@@ -144,6 +132,12 @@ async function sendReminder(reminder) {
   await channel.send(content).catch(console.error);
 }
 
+function normalizeEmoji(emoji) {
+  if (!emoji) return '';
+  if (typeof emoji === 'string') return emoji;
+  return emoji.name || emoji.toString();
+}
+
 async function sendReactionRoleMessage(reactionConfigOverride = null) {
   const config = readConfig();
   const baseReactionConfig = config.reactionRoleMessage || {};
@@ -169,14 +163,12 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
     return { sent: false, reason: `Channel ${reactionConfig.channelId} is not a text channel.` };
   }
 
-  const customMessage = (reactionConfig.messageText || '').trim();
-  const messageText = customMessage
-    ? `${customMessage}\n\nReact to receive your role:\n${(reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n')}`
-    : 'React to receive your role:\n' + (reactionConfig.reactions || []).map((item) => `${item.emoji} - ${item.roleId}`).join('\n');
+  const messageText = buildReactionRoleMessageText(reactionConfig);
   console.log('[reaction-role] sending to channel', reactionConfig.channelId, ':', messageText);
   const sent = await channel.send(messageText).catch((error) => ({ error }));
   if (sent && sent.id) {
     reactionConfig.messageId = sent.id;
+    reactionConfig.guildId = channel.guildId || reactionConfig.guildId || '';
     reactionConfig.enabled = true;
     config.reactionRoleMessage = reactionConfig;
     writeConfig(config);
@@ -190,23 +182,26 @@ async function sendReactionRoleMessage(reactionConfigOverride = null) {
   return { sent: false, reason: `Could not send the message. Discord returned: ${errorMessage}` };
 }
 
-async function handleReaction(role, userId, emojiName) {
+async function handleReaction(role, userId, emojiName, guildId) {
   const config = readConfig();
   const reactionConfig = config.reactionRoleMessage || {};
-  const reactionEntry = (reactionConfig.reactions || []).find((item) => item.emoji === emojiName);
+  const reactionEntry = (reactionConfig.reactions || []).find((item) => normalizeEmoji(item.emoji) === emojiName);
   if (!reactionEntry || !reactionEntry.roleId) return;
 
-  const guild = role.guild;
-  const member = await guild.members.fetch(userId).catch(() => null);
+  const guild = guildId ? await client.guilds.fetch(guildId).catch(() => null) : null;
+  const targetGuild = guild || (reactionConfig.guildId ? await client.guilds.fetch(reactionConfig.guildId).catch(() => null) : null) || (await client.guilds.fetch()).first();
+  if (!targetGuild) return;
+
+  const member = await targetGuild.members.fetch(userId).catch(() => null);
   if (!member) return;
 
-  const roleToAssign = await guild.roles.fetch(reactionEntry.roleId).catch(() => null);
+  const roleToAssign = await targetGuild.roles.fetch(reactionEntry.roleId).catch(() => null);
   if (!roleToAssign) return;
 
   if (role) {
-    await member.roles.add(roleToAssign).catch(() => null);
+    await member.roles.add(roleToAssign).catch((error) => console.error('[reaction-role] failed to add role', error));
   } else {
-    await member.roles.remove(roleToAssign).catch(() => null);
+    await member.roles.remove(roleToAssign).catch((error) => console.error('[reaction-role] failed to remove role', error));
   }
 }
 
@@ -292,8 +287,8 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
   const reactionConfig = config.reactionRoleMessage || {};
   const messageId = reactionConfig.messageId;
   if (!messageId || reaction.message.id !== messageId) return;
-  const emojiName = reaction.emoji.name || reaction.emoji.toString();
-  await handleReaction(true, user.id, emojiName);
+  const emojiName = normalizeEmoji(reaction.emoji);
+  await handleReaction(true, user.id, emojiName, reaction.message.guildId);
 });
 
 client.on(Events.MessageReactionRemove, async (reaction, user) => {
@@ -302,8 +297,8 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
   const reactionConfig = config.reactionRoleMessage || {};
   const messageId = reactionConfig.messageId;
   if (!messageId || reaction.message.id !== messageId) return;
-  const emojiName = reaction.emoji.name || reaction.emoji.toString();
-  await handleReaction(false, user.id, emojiName);
+  const emojiName = normalizeEmoji(reaction.emoji);
+  await handleReaction(false, user.id, emojiName, reaction.message.guildId);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
