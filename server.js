@@ -13,7 +13,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const configPath = path.join(__dirname, 'data', 'config.json');
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildMembers],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildMembers],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
@@ -205,6 +205,65 @@ async function handleReaction(role, userId, emojiName, guildId) {
   }
 }
 
+function messageMatchesReactionRoleConfig(message, reactionConfig) {
+  const expected = (reactionConfig.reactions || []).map((item) => normalizeEmoji(item.emoji));
+  if (!expected.length) return false;
+
+  const present = new Set(message.reactions.cache.map((r) => normalizeEmoji(r.emoji)));
+  return expected.every((emoji) => present.has(emoji));
+}
+
+async function reconcileReactionRoleMessage(message) {
+  if (!client.user || message.author.id !== client.user.id) return;
+
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  if (!reactionConfig.channelId || message.channelId !== reactionConfig.channelId) return;
+  if (!messageMatchesReactionRoleConfig(message, reactionConfig)) return;
+
+  if (reactionConfig.messageId !== message.id) {
+    reactionConfig.messageId = message.id;
+    reactionConfig.guildId = message.guildId || reactionConfig.guildId || '';
+    reactionConfig.enabled = true;
+    config.reactionRoleMessage = reactionConfig;
+    writeConfig(config);
+    console.log('[reaction-role] adopted existing message', message.id, 'as the tracked reaction-role message');
+  }
+
+  for (const item of reactionConfig.reactions || []) {
+    const messageReaction = message.reactions.cache.find((r) => normalizeEmoji(r.emoji) === normalizeEmoji(item.emoji));
+    if (!messageReaction) continue;
+
+    const reactors = await messageReaction.users.fetch().catch(() => null);
+    if (!reactors) continue;
+
+    for (const reactor of reactors.values()) {
+      if (reactor.bot) continue;
+      await handleReaction(true, reactor.id, normalizeEmoji(item.emoji), message.guildId);
+    }
+  }
+}
+
+async function scanReactionRoleChannel() {
+  const config = readConfig();
+  const reactionConfig = config.reactionRoleMessage || {};
+  if (!reactionConfig.channelId) return;
+
+  let channel = client.channels.cache.get(reactionConfig.channelId);
+  if (!channel) {
+    channel = await client.channels.fetch(reactionConfig.channelId).catch(() => null);
+  }
+  if (!channel || !channel.isTextBased()) return;
+
+  const messages = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+  if (!messages) return;
+
+  for (const message of messages.values()) {
+    if (message.author.id !== client.user.id) continue;
+    await reconcileReactionRoleMessage(message).catch((error) => console.error('[reaction-role] reconcile failed', error));
+  }
+}
+
 function startReminderLoop() {
   setInterval(() => {
     const config = readConfig();
@@ -308,19 +367,43 @@ app.post('/config', (req, res) => {
   res.json(newConfig);
 });
 
-client.once(Events.ClientReady, () => {
+client.once(Events.ClientReady, async () => {
   console.log(`Logged in as ${client.user.tag}`);
   startReminderLoop();
+  await scanReactionRoleChannel().catch((error) => console.error('[reaction-role] startup scan failed', error));
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  if (!client.user || message.author.id !== client.user.id) return;
+  await reconcileReactionRoleMessage(message).catch((error) => console.error('[reaction-role] reconcile failed', error));
 });
 
 client.on(Events.MessageReactionAdd, async (reaction, user) => {
   if (user.bot) return;
+
+  if (reaction.partial) {
+    reaction = await reaction.fetch().catch(() => null);
+    if (!reaction) return;
+  }
+
+  let message = reaction.message;
+  if (message.partial) {
+    message = await message.fetch().catch(() => null);
+    if (!message) return;
+  }
+
   const config = readConfig();
   const reactionConfig = config.reactionRoleMessage || {};
-  const messageId = reactionConfig.messageId;
-  if (!messageId || reaction.message.id !== messageId) return;
   const emojiName = normalizeEmoji(reaction.emoji);
-  await handleReaction(true, user.id, emojiName, reaction.message.guildId);
+
+  if (reactionConfig.messageId && message.id === reactionConfig.messageId) {
+    await handleReaction(true, user.id, emojiName, message.guildId);
+    return;
+  }
+
+  if (client.user && message.author.id === client.user.id && message.channelId === reactionConfig.channelId) {
+    await reconcileReactionRoleMessage(message).catch((error) => console.error('[reaction-role] reconcile failed', error));
+  }
 });
 
 client.on(Events.MessageReactionRemove, async (reaction, user) => {
