@@ -64,11 +64,35 @@ function buildReactionRoleMessageText(reactionConfig = {}) {
   return customMessage || '';
 }
 
+function getNextTriggerTime(reminder, now = new Date(), timeZone = DEFAULT_TIME_ZONE) {
+  if (!reminder.enabled) return null;
+
+  let candidates = getReminderSchedule(reminder, now, timeZone);
+  if (!candidates.length) {
+    if (!reminder.reminderTime) return null;
+    const [hours, minutes] = reminder.reminderTime.split(':').map(Number);
+    if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+    candidates = [hours * 60 + minutes];
+  }
+
+  const { currentMinutes } = getTimeParts(now, timeZone);
+  let bestDiff = null;
+  candidates.forEach((target) => {
+    let diff = target - currentMinutes;
+    if (diff <= 0) diff += 24 * 60;
+    if (bestDiff === null || diff < bestDiff) bestDiff = diff;
+  });
+
+  if (bestDiff === null) return null;
+  return new Date(now.getTime() + bestDiff * 60000).toISOString();
+}
+
 module.exports = {
   DEFAULT_TIME_ZONE,
   DEFAULT_LOOKAHEAD_MINUTES,
   getTimeParts,
   getReminderSchedule,
   shouldSendReminder,
-  buildReactionRoleMessageText
+  buildReactionRoleMessageText,
+  getNextTriggerTime
 };

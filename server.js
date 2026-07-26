@@ -4,7 +4,7 @@ const path = require('path');
 const { randomUUID } = require('crypto');
 const dotenv = require('dotenv');
 const { Client, GatewayIntentBits, Events, Partials } = require('discord.js');
-const { shouldSendReminder: shouldSendReminderAtTime, buildReactionRoleMessageText } = require('./reminder-utils');
+const { shouldSendReminder: shouldSendReminderAtTime, buildReactionRoleMessageText, getNextTriggerTime } = require('./reminder-utils');
 
 const envPath = path.resolve(__dirname, '.env');
 dotenv.config({ path: envPath, override: true });
@@ -26,11 +26,36 @@ function createReminder(overrides = {}) {
     id: overrides.id || randomUUID(),
     type: overrides.type || '',
     enabled: overrides.enabled !== false,
-    channelId: overrides.channelId || '',
-    roleId: overrides.roleId || '',
+    channelId: (overrides.channelId || '').trim(),
+    roleId: (overrides.roleId || '').trim(),
     reminderTime: overrides.reminderTime || '09:00',
     repeatIntervalMinutes: overrides.repeatIntervalMinutes != null ? Number(overrides.repeatIntervalMinutes) : 0,
     message: overrides.message || 'Reminder time!'
+  };
+}
+
+function defaultReactionRoleConfig() {
+  return {
+    channelId: '1528095638955233350',
+    messageId: '',
+    enabled: false,
+    reactions: [
+      { emoji: '🎯', roleId: '1530604998805684399' },
+      { emoji: '⚔️', roleId: '1530611582332047391' },
+      { emoji: '🗺️', roleId: '1530611664745922730' }
+    ]
+  };
+}
+
+function normalizeReactionRoleConfig(reactionConfig = {}) {
+  const merged = { ...defaultReactionRoleConfig(), ...reactionConfig };
+  return {
+    ...merged,
+    channelId: (merged.channelId || '').trim(),
+    reactions: (merged.reactions || []).map((item) => ({
+      emoji: (item.emoji || '').trim(),
+      roleId: (item.roleId || '').trim()
+    })).filter((item) => item.emoji && item.roleId)
   };
 }
 
@@ -65,16 +90,7 @@ function readConfig() {
         createReminder({ id: 'elite-boss', type: 'elite-boss', enabled: true, channelId: '1530601219872129134', roleId: '1530611582332047391', reminderTime: '00:55', repeatIntervalMinutes: 10, message: 'Elite Bosses will be spawned in 5 minutes' }),
         createReminder({ id: 'map-boss', type: 'map-boss', enabled: true, channelId: '1530604998805684399', roleId: '1530611664745922730', reminderTime: '23:55', repeatIntervalMinutes: 10, message: 'Map Bosses (2hrs bosses) will be spawned in 5 minutes' })
       ],
-      reactionRoleMessage: {
-        channelId: '1528095638955233350',
-        messageId: '',
-        enabled: false,
-        reactions: [
-          { emoji: '🎯', roleId: '1530604998805684399' },
-          { emoji: '⚔️', roleId: '1530611582332047391' },
-          { emoji: '🗺️', roleId: '1530611664745922730' }
-        ]
-      }
+      reactionRoleMessage: defaultReactionRoleConfig()
     }, null, 2));
   }
 
@@ -91,19 +107,7 @@ function readConfig() {
   }
 
   parsed.reminders = parsed.reminders.map((item) => createReminder(item));
-
-  if (!parsed.reactionRoleMessage) {
-    parsed.reactionRoleMessage = {
-      channelId: '1528095638955233350',
-      messageId: '',
-      enabled: false,
-      reactions: [
-        { emoji: '🎯', roleId: '1530604998805684399' },
-        { emoji: '⚔️', roleId: '1530611582332047391' },
-        { emoji: '🗺️', roleId: '1530611664745922730' }
-      ]
-    };
-  }
+  parsed.reactionRoleMessage = normalizeReactionRoleConfig(parsed.reactionRoleMessage);
 
   return parsed;
 }
@@ -113,18 +117,7 @@ function writeConfig(data) {
   config.reminders = Array.isArray(config.reminders)
     ? config.reminders.map((item) => createReminder(item))
     : [createReminder()];
-  if (!config.reactionRoleMessage) {
-    config.reactionRoleMessage = {
-      channelId: '1528095638955233350',
-      messageId: '',
-      enabled: false,
-      reactions: [
-        { emoji: '🎯', roleId: '1530604998805684399' },
-        { emoji: '⚔️', roleId: '1530611582332047391' },
-        { emoji: '🗺️', roleId: '1530611664745922730' }
-      ]
-    };
-  }
+  config.reactionRoleMessage = normalizeReactionRoleConfig(config.reactionRoleMessage);
   fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 }
 
@@ -155,10 +148,10 @@ function normalizeEmoji(emoji) {
 async function sendReactionRoleMessage(reactionConfigOverride = null) {
   const config = readConfig();
   const baseReactionConfig = config.reactionRoleMessage || {};
-  const reactionConfig = {
+  const reactionConfig = normalizeReactionRoleConfig({
     ...baseReactionConfig,
     ...(reactionConfigOverride || {})
-  };
+  });
 
   if (!reactionConfig.channelId) {
     return { sent: false, reason: 'No channel ID was provided.' };
@@ -310,18 +303,22 @@ async function scanReactionRoleChannel() {
   };
 }
 
+const lastReminderSentMinute = new Map();
+
 function startReminderLoop() {
   setInterval(() => {
     const config = readConfig();
     const reminders = config.reminders || [];
     const now = new Date();
+    const minuteKey = Math.floor(now.getTime() / 60000);
 
     reminders.forEach((reminder) => {
       if (!reminder.enabled || !reminder.reminderTime) return;
+      if (!shouldSendReminder(reminder, now)) return;
+      if (lastReminderSentMinute.get(reminder.id) === minuteKey) return;
 
-      if (shouldSendReminder(reminder, now)) {
-        sendReminder(reminder).catch(console.error);
-      }
+      lastReminderSentMinute.set(reminder.id, minuteKey);
+      sendReminder(reminder).catch(console.error);
     });
   }, 30000);
 }
@@ -331,12 +328,29 @@ app.get('/', (req, res) => {
 });
 
 app.get('/health', (req, res) => {
-  res.json({ ok: true, service: 'discord-reminder-bot' });
+  res.json({
+    ok: true,
+    service: 'discord-reminder-bot',
+    discordReady: client.isReady(),
+    discordTag: client.user ? client.user.tag : null,
+    uptimeSeconds: Math.round(process.uptime())
+  });
 });
 
 app.get('/config', (req, res) => {
   const config = readConfig();
   res.json(config);
+});
+
+app.get('/reminders/next', (req, res) => {
+  const config = readConfig();
+  const timeZone = process.env.REMINDER_TIME_ZONE || 'Europe/Bucharest';
+  const now = new Date();
+  const next = {};
+  (config.reminders || []).forEach((reminder) => {
+    next[reminder.id] = getNextTriggerTime(reminder, now, timeZone);
+  });
+  res.json({ next, timeZone, now: now.toISOString() });
 });
 
 app.post('/reaction-role/send', async (req, res) => {
@@ -409,20 +423,24 @@ app.get('/guilds', async (req, res) => {
 });
 
 app.post('/config', (req, res) => {
-  const currentConfig = readConfig();
-  const payload = req.body || {};
-  const reminders = Array.isArray(payload.reminders) && payload.reminders.length
-    ? payload.reminders.map((item) => createReminder(item))
-    : [createReminder()];
+  try {
+    const currentConfig = readConfig();
+    const payload = req.body || {};
+    const reminders = Array.isArray(payload.reminders) && payload.reminders.length
+      ? payload.reminders.map((item) => createReminder(item))
+      : [createReminder()];
 
-  const newConfig = {
-    ...currentConfig,
-    ...payload,
-    reminders
-  };
+    const newConfig = {
+      ...currentConfig,
+      ...payload,
+      reminders
+    };
 
-  writeConfig(newConfig);
-  res.json(newConfig);
+    writeConfig(newConfig);
+    res.json(newConfig);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
 });
 
 client.once(Events.ClientReady, async () => {

@@ -82,9 +82,17 @@
       .reminder-item { padding: 14px; border-radius: 14px; background: rgba(255,255,255,0.04); border: 1px solid var(--border); }
       .reminder-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
       .pill { display: inline-block; padding: 4px 8px; border-radius: 999px; font-size: 0.78rem; background: rgba(99, 102, 241, 0.16); color: #c7d2fe; }
-      .status { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(34, 197, 94, 0.16); color: #dcfce7; border: 1px solid rgba(34, 197, 94, 0.24); }
+      .status { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: rgba(148, 163, 184, 0.16); color: #e2e8f0; border: 1px solid rgba(148, 163, 184, 0.24); white-space: pre-wrap; }
+      .status.success { background: rgba(34, 197, 94, 0.16); color: #dcfce7; border-color: rgba(34, 197, 94, 0.24); }
+      .status.error { background: rgba(239, 68, 68, 0.16); color: #fee2e2; border-color: rgba(239, 68, 68, 0.28); }
+      .status.pending { background: rgba(99, 102, 241, 0.16); color: #e0e7ff; border-color: rgba(99, 102, 241, 0.28); }
       .help { margin-top: 14px; color: var(--muted); font-size: 0.95rem; line-height: 1.6; }
       .help code { color: #bfdbfe; }
+      .next-trigger { margin-top: 8px; font-size: 0.82rem; color: #a5b4fc; }
+      .reaction-row { display: grid; gap: 8px; grid-template-columns: 90px 1fr auto; align-items: center; margin-bottom: 8px; }
+      .reaction-row input { width: 100%; }
+      .reaction-row button { width: auto; padding: 8px 12px; }
+      button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
 
       @media (max-width: 720px) {
         .row { grid-template-columns: 1fr; }
@@ -147,7 +155,8 @@
               </div>
               <div style="margin-top: 10px;">
                 <label>Reactions</label>
-                <textarea id="reactionReactions" rows="4" placeholder="emoji:roleId lines"></textarea>
+                <div id="reactionRows"></div>
+                <button type="button" class="secondary" id="add-reaction-row" style="width: auto; padding: 8px 12px;">+ Add Reaction</button>
               </div>
               <div class="row" style="margin-top: 12px;">
                 <button type="button" class="secondary" id="send-reaction-message">Send Reaction Message</button>
@@ -184,8 +193,78 @@
       const reactionChannelId = document.getElementById('reactionChannelId');
       const reactionMessageId = document.getElementById('reactionMessageId');
       const reactionMessageText = document.getElementById('reactionMessageText');
-      const reactionReactions = document.getElementById('reactionReactions');
+      const reactionRows = document.getElementById('reactionRows');
       const reactionState = document.getElementById('reactionState');
+
+      function setStatus(el, message, type = 'neutral') {
+        el.textContent = message;
+        el.classList.remove('success', 'error', 'pending');
+        if (type !== 'neutral') el.classList.add(type);
+      }
+
+      async function withBusy(button, fn) {
+        const originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Working...';
+        try {
+          await fn();
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+
+      function formatNextTrigger(iso) {
+        if (!iso) return 'Next trigger: not scheduled';
+        const target = new Date(iso);
+        const diffMinutes = Math.max(0, Math.round((target.getTime() - Date.now()) / 60000));
+        const hours = Math.floor(diffMinutes / 60);
+        const minutes = diffMinutes % 60;
+        const relative = hours > 0 ? `in ${hours}h ${minutes}m` : `in ${minutes}m`;
+        return `Next trigger: ${relative} (${target.toLocaleString()})`;
+      }
+
+      async function loadNextTriggers() {
+        try {
+          const res = await fetch('/reminders/next');
+          const data = await res.json();
+          reminderList.querySelectorAll('.reminder-item').forEach((card) => {
+            const id = card.querySelector('[name="id"]').value;
+            const el = card.querySelector('[data-next-trigger]');
+            if (!el) return;
+            el.textContent = id ? formatNextTrigger(data.next ? data.next[id] : null) : 'Next trigger: save to schedule';
+          });
+        } catch (error) {
+          // Non-critical, leave existing text in place.
+        }
+      }
+
+      function createReactionRow(item = {}) {
+        const row = document.createElement('div');
+        row.className = 'reaction-row';
+        row.innerHTML = `
+          <input class="reaction-emoji" value="${item.emoji || ''}" placeholder="🎯" />
+          <input class="reaction-roleid" value="${item.roleId || ''}" placeholder="Role ID" />
+          <button type="button" class="danger remove-reaction-row">Remove</button>
+        `;
+        row.querySelector('.remove-reaction-row').addEventListener('click', () => row.remove());
+        return row;
+      }
+
+      function renderReactionRows(reactions) {
+        reactionRows.innerHTML = '';
+        const list = reactions && reactions.length ? reactions : [{ emoji: '', roleId: '' }];
+        list.forEach((item) => reactionRows.appendChild(createReactionRow(item)));
+      }
+
+      function getReactionsPayload() {
+        return Array.from(reactionRows.querySelectorAll('.reaction-row'))
+          .map((row) => ({
+            emoji: row.querySelector('.reaction-emoji').value.trim(),
+            roleId: row.querySelector('.reaction-roleid').value.trim()
+          }))
+          .filter((item) => item.emoji && item.roleId);
+      }
 
       function createReminderCard(reminder = {}, index = 0) {
         const item = document.createElement('div');
@@ -215,14 +294,15 @@
                 <option value="map-boss" ${reminder.type === 'map-boss' ? 'selected' : ''}>Map Boss</option>
               </select>
             </div>
-            <div>
-              <label>Repeat every (minutes)</label>
-              <input name="repeatIntervalMinutes" type="number" min="0" value="${reminder.repeatIntervalMinutes || 0}" />
+            <div class="custom-time-field" style="${reminder.type ? 'display:none;' : ''}">
+              <label>Reminder Time</label>
+              <input name="reminderTime" type="time" value="${reminder.reminderTime || '09:00'}" />
             </div>
           </div>
           <div style="margin-top: 8px; color: #cbd5e1; font-size: 0.85rem;">
-            ${reminder.type === 'world-boss' ? 'Schedule: weekdays 10:00/22:00, weekends 10:00/18:00/22:00' : reminder.type === 'elite-boss' ? 'Schedule: every 4 hours at 01:00, 05:00, 09:00, 13:00, 17:00, 21:00, 25:00' : reminder.type === 'map-boss' ? 'Schedule: every 2 hours from 00:00 through 22:00' : 'Use a custom time or choose a boss preset.'}
+            ${reminder.type === 'world-boss' ? 'Schedule: weekdays 10:00/22:00, weekends 10:00/18:00/22:00' : reminder.type === 'elite-boss' ? 'Schedule: every 4 hours at 01:00, 05:00, 09:00, 13:00, 17:00, 21:00, 25:00' : reminder.type === 'map-boss' ? 'Schedule: every 2 hours from 00:00 through 22:00' : 'Custom: fires once daily at the time above.'}
           </div>
+          <div class="next-trigger" data-next-trigger>Next trigger: —</div>
           <div style="margin-top: 10px;">
             <label>Message</label>
             <textarea name="message" placeholder="Reminder text">${reminder.message || 'Reminder time!'}</textarea>
@@ -245,6 +325,11 @@
         item.querySelector('.remove-reminder').addEventListener('click', () => {
           item.remove();
           renderReminderCount();
+        });
+        const typeSelect = item.querySelector('select[name="type"]');
+        const timeField = item.querySelector('.custom-time-field');
+        typeSelect.addEventListener('change', () => {
+          timeField.style.display = typeSelect.value ? 'none' : '';
         });
         return item;
       }
@@ -307,112 +392,144 @@
         reactionChannelId.value = reactionConfig.channelId || '1528095638955233350';
         reactionMessageId.value = reactionConfig.messageId || '';
         reactionMessageText.value = reactionConfig.messageText || '';
-        reactionReactions.value = (reactionConfig.reactions || []).map((item) => `${item.emoji}:${item.roleId}`).join('\n');
-        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
-        statusBox.textContent = 'Configuration loaded.';
+        renderReactionRows(reactionConfig.reactions);
+        setStatus(reactionState, reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.');
+        setStatus(statusBox, 'Configuration loaded.', 'success');
         loadGuilds();
+        loadNextTriggers();
       }
 
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const cards = Array.from(reminderList.querySelectorAll('.reminder-item'));
-        const reminders = cards.map((card) => {
-          const get = (name) => card.querySelector(`[name="${name}"]`).value;
-          return {
-            id: card.querySelector('[name="id"]').value || undefined,
-            type: get('type'),
-            channelId: get('channelId'),
-            roleId: get('roleId'),
-            reminderTime: get('reminderTime'),
-            repeatIntervalMinutes: Number(get('repeatIntervalMinutes') || 0),
-            message: get('message'),
-            enabled: get('enabled') === 'true'
+        const saveButton = form.querySelector('button[type="submit"]');
+        await withBusy(saveButton, async () => {
+          const cards = Array.from(reminderList.querySelectorAll('.reminder-item'));
+          const reminders = cards.map((card) => {
+            const get = (name) => card.querySelector(`[name="${name}"]`).value;
+            return {
+              id: card.querySelector('[name="id"]').value || undefined,
+              type: get('type'),
+              channelId: get('channelId').trim(),
+              roleId: get('roleId').trim(),
+              reminderTime: get('reminderTime'),
+              message: get('message'),
+              enabled: get('enabled') === 'true'
+            };
+          });
+
+          const payload = {
+            clientId: clientIdInput.value.trim(),
+            reminders,
+            reactionRoleMessage: {
+              channelId: reactionChannelId.value.trim(),
+              enabled: reactionEnabled.value === 'true',
+              messageText: reactionMessageText.value,
+              reactions: getReactionsPayload()
+            }
           };
-        });
 
-        const payload = {
-          clientId: clientIdInput.value,
-          reminders,
-          reactionRoleMessage: {
-            channelId: reactionChannelId.value,
-            enabled: reactionEnabled.value === 'true',
-            messageText: reactionMessageText.value,
-            reactions: reactionReactions.value.split('\n').filter(Boolean).map((line) => {
-              const parts = line.split(':');
-              return { emoji: parts[0], roleId: parts.slice(1).join(':') };
-            })
+          try {
+            const res = await fetch('/config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (!res.ok) {
+              setStatus(statusBox, `Save failed: ${data.error || 'Unknown error'}`, 'error');
+              return;
+            }
+            setStatus(statusBox, 'All reminders saved successfully.', 'success');
+            if (clientIdInput.value) {
+              inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${clientIdInput.value}&scope=bot&permissions=8`;
+            }
+            loadNextTriggers();
+          } catch (error) {
+            setStatus(statusBox, `Save failed: ${error.message}`, 'error');
           }
-        };
-
-        const res = await fetch('/config', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        statusBox.textContent = 'All reminders saved successfully.';
-        if (clientIdInput.value) {
-          inviteLinkInput.value = `https://discord.com/oauth2/authorize?client_id=${clientIdInput.value}&scope=bot&permissions=8`;
-        }
-        console.log(data);
       });
 
       document.getElementById('add-reminder').addEventListener('click', () => addReminder());
-      document.getElementById('send-reaction-message').addEventListener('click', async () => {
-        const payload = {
-          channelId: reactionChannelId.value,
-          enabled: true,
-          messageText: reactionMessageText.value,
-          reactions: reactionReactions.value.split('\n').filter(Boolean).map((line) => {
-            const parts = line.split(':');
-            return { emoji: parts[0], roleId: parts.slice(1).join(':') };
-          })
-        };
+      document.getElementById('add-reaction-row').addEventListener('click', () => {
+        reactionRows.appendChild(createReactionRow());
+      });
 
-        const res = await fetch('/reaction-role/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+      document.getElementById('send-reaction-message').addEventListener('click', async (event) => {
+        await withBusy(event.target, async () => {
+          setStatus(reactionState, 'Sending message...', 'pending');
+          const payload = {
+            channelId: reactionChannelId.value.trim(),
+            enabled: true,
+            messageText: reactionMessageText.value,
+            reactions: getReactionsPayload()
+          };
+
+          const res = await fetch('/reaction-role/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const data = await res.json();
+          const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
+          reactionMessageId.value = reactionConfig.messageId || '';
+          setStatus(
+            reactionState,
+            data.sent
+              ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}\nPreview: ${data.messageText || ''}`
+              : `Send failed: ${data.reason || 'Unknown error'}`,
+            data.sent ? 'success' : 'error'
+          );
         });
-        const data = await res.json();
-        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
-        reactionMessageId.value = reactionConfig.messageId || '';
-        reactionState.textContent = data.sent
-          ? `Message sent successfully. Message ID: ${reactionConfig.messageId || 'unknown'}\nPreview: ${data.messageText || ''}`
-          : `Send failed: ${data.reason || 'Unknown error'}`;
       });
-      document.getElementById('delete-reaction-message').addEventListener('click', async () => {
-        const res = await fetch('/reaction-role/delete', { method: 'DELETE' });
-        const data = await res.json();
-        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
-        reactionMessageId.value = reactionConfig.messageId || '';
-        reactionState.textContent = data.deleted
-          ? 'Reaction message deleted successfully.'
-          : `Delete failed: ${data.reason || 'Unknown error'}`;
+
+      document.getElementById('delete-reaction-message').addEventListener('click', async (event) => {
+        await withBusy(event.target, async () => {
+          setStatus(reactionState, 'Deleting message...', 'pending');
+          const res = await fetch('/reaction-role/delete', { method: 'DELETE' });
+          const data = await res.json();
+          const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
+          reactionMessageId.value = reactionConfig.messageId || '';
+          setStatus(
+            reactionState,
+            data.deleted ? 'Reaction message deleted successfully.' : `Delete failed: ${data.reason || 'Unknown error'}`,
+            data.deleted ? 'success' : 'error'
+          );
+        });
       });
-      document.getElementById('refresh-reaction-state').addEventListener('click', async () => {
-        const res = await fetch('/config');
-        const data = await res.json();
-        const reactionConfig = data.reactionRoleMessage || {};
-        reactionMessageId.value = reactionConfig.messageId || '';
-        reactionState.textContent = reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.';
+
+      document.getElementById('refresh-reaction-state').addEventListener('click', async (event) => {
+        await withBusy(event.target, async () => {
+          const res = await fetch('/config');
+          const data = await res.json();
+          const reactionConfig = data.reactionRoleMessage || {};
+          reactionMessageId.value = reactionConfig.messageId || '';
+          setStatus(reactionState, reactionConfig.messageId ? `Message ID: ${reactionConfig.messageId}` : 'No reaction message sent yet.');
+        });
       });
-      document.getElementById('sync-reaction-roles').addEventListener('click', async () => {
-        reactionState.textContent = 'Scanning the channel for reactions...';
-        const res = await fetch('/reaction-role/sync', { method: 'POST' });
-        const data = await res.json();
-        const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
-        reactionMessageId.value = reactionConfig.messageId || '';
-        reactionState.textContent = data.synced
-          ? (data.reason || 'Sync complete.')
-          : `Sync failed: ${data.reason || 'Unknown error'}`;
+
+      document.getElementById('sync-reaction-roles').addEventListener('click', async (event) => {
+        await withBusy(event.target, async () => {
+          setStatus(reactionState, 'Scanning the channel for reactions...', 'pending');
+          const res = await fetch('/reaction-role/sync', { method: 'POST' });
+          const data = await res.json();
+          const reactionConfig = (data.config && data.config.reactionRoleMessage) || {};
+          reactionMessageId.value = reactionConfig.messageId || '';
+          setStatus(
+            reactionState,
+            data.synced ? (data.reason || 'Sync complete.') : `Sync failed: ${data.reason || 'Unknown error'}`,
+            data.synced ? 'success' : 'error'
+          );
+        });
       });
+
       guildSelect.addEventListener('change', (event) => {
         const selectedGuildId = event.target.value;
         if (!selectedGuildId) return;
         const selectedGuildName = event.target.options[event.target.selectedIndex].text;
-        statusBox.textContent = `Selected server: ${selectedGuildName}`;
+        setStatus(statusBox, `Selected server: ${selectedGuildName}`, 'success');
       });
+
       loadConfig();
     </script>
   </body>
